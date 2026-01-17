@@ -1,15 +1,14 @@
-import pygame
-import sys
-import re
-import PyPDF2
 import os
+import re
+import sys
+import pygame
+import PyPDF2
 import pytesseract
 from pdf2image import convert_from_path
 
 # ----- CONFIG -----
 PDF_FILE = "Example_Quantum_Bioinformatics.pdf"
-TXT_FILE = os.path.splitext(PDF_FILE)[0] + "_processed.txt"
-CONFIG_FILE = "speed_read_config.txt"
+CACHE_FILE = os.path.splitext(PDF_FILE)[0] + "_cache.txt"
 START_WPM = 500
 WPM_STEP = 50
 MIN_WPM = 20
@@ -21,44 +20,60 @@ BACKGROUND_COLOR = (0, 0, 0)
 LETTER_COLOR = (255, 255, 255)
 CENTER_COLOR = (255, 0, 0)
 REFRESH_BACKWORDS = 100
+
+POPPLER_PATH = r"C:\poppler-25.12.0\Library\bin"
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-poppler_path = r"C:\poppler-25.12.0\Library\bin"
 # ------------------
 
-# ----- LOAD PDF TEXT -----
-# If we already processed this PDF, just load the text
-if os.path.exists(TXT_FILE):
-    print("Processed plain text file already exists. Accelerating process.")
-    with open(TXT_FILE, "r", encoding="utf-8") as f:
-        full_text = f.read()
-    pages_text = full_text.split("\n\n---PAGE---\n\n")  # if you want to keep pages separate
-else:
-    # ----- LOAD PDF TEXT -----
+# ----- LOAD CACHE FILE -----
+start_index = 0
+current_wpm = START_WPM
+pages_text = []
+
+if os.path.exists(CACHE_FILE):
+    print("Loading from cache file...")
+    with open(CACHE_FILE, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+        # First line = WPM
+        try:
+            current_wpm = int(lines[0].strip())
+        except:
+            current_wpm = START_WPM
+        # Second line = last word index
+        try:
+            start_index = max(int(lines[1].strip()) - REFRESH_BACKWORDS, 0)
+        except:
+            start_index = 0
+        # Remaining lines = processed text
+        pages_text = "".join(lines[2:]).split("\n\n---PAGE---\n\n")
+
+# ----- PROCESS PDF IF CACHE EMPTY -----
+if not pages_text or all(not p.strip() for p in pages_text):
+    print("Processing PDF...")
     pages_text = []
     with open(PDF_FILE, "rb") as f:
-        
         reader = PyPDF2.PdfReader(f)
         for page in reader.pages:
-            page_text = page.extract_text()
-            if page_text:
-                pages_text.append(page_text)
+            text = page.extract_text()
+            if text:
+                pages_text.append(text)
 
-    # If no text found, use OCR
+    # If PDF has no text, use OCR
     if len(pages_text) == 0:
-        print("No text found in PDF, using OCR...")
-        images = convert_from_path(PDF_FILE, dpi=300, poppler_path=poppler_path)
+        print("No text found, using OCR...")
+        images = convert_from_path(PDF_FILE, dpi=300, poppler_path=POPPLER_PATH)
         for img in images:
             gray = img.convert('L')
-            page_text = pytesseract.image_to_string(gray)
-            pages_text.append(page_text)
+            pages_text.append(pytesseract.image_to_string(gray))
 
-    # Save processed text for future use
-    with open(TXT_FILE, "w", encoding="utf-8") as f:
+    # Save processed text + WPM/index to cache
+    with open(CACHE_FILE, "w", encoding="utf-8") as f:
+        f.write(f"{current_wpm}\n{start_index}\n")
         for page in pages_text:
             f.write(page.strip() + "\n\n---PAGE---\n\n")
 
-# ----- PROCESS WORDS AND TRACK PAGES -----
-words_info = []  # list of (word, page_num)
+# ----- EXTRACT WORDS -----
+words_info = []
 for page_idx, page in enumerate(pages_text):
     for word in re.findall(r'\b\w+\b', page):
         words_info.append((word, page_idx + 1))
@@ -66,25 +81,13 @@ for page_idx, page in enumerate(pages_text):
 total_words = len(words_info)
 print(f"Total words extracted: {total_words}")
 
-# ----- LOAD LOG -----
-log_file = f"{os.path.splitext(PDF_FILE)[0]}_log.txt"
-config_file = f"{os.path.splitext(PDF_FILE)[0]}_config.txt"
-start_index = 0
-if os.path.exists(log_file):
-    with open(log_file, "r") as f:
-        try:
-            saved_index = int(f.read())
-            start_index = max(saved_index - REFRESH_BACKWORDS, 0)
-            print(f"Resuming at word {start_index}")
-        except:
-            pass
-
 # ----- INITIALIZE PYGAME -----
 pygame.init()
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 pygame.display.set_caption("Speed Reading")
 font = pygame.font.SysFont(None, FONT_SIZE)
 info_font = pygame.font.SysFont(None, INFO_FONT_SIZE)
+clock = pygame.time.Clock()
 
 def draw_word(word, page, wpm, word_index):
     screen.fill(BACKGROUND_COLOR)
@@ -122,51 +125,39 @@ def draw_word(word, page, wpm, word_index):
 
     pygame.display.flip()
 
-
-
 def wpm_to_duration(wpm):
     return max(60000 / wpm, 10)
 
-def save_config():
-    with open(CONFIG_FILE, "w") as f:
-        f.write(f"WPM: {current_wpm}\n")
-
-
-# ----- MAIN LOOP SETUP -----
+# ----- MAIN LOOP -----
 paused = False
 i = start_index
-clock = pygame.time.Clock()
-current_wpm = START_WPM
 current_duration = wpm_to_duration(current_wpm)
-
-current_wpm = START_WPM
-if os.path.exists(CONFIG_FILE):
-    try:
-        with open(CONFIG_FILE, "r") as f:
-            line = f.readline()
-            if line.startswith("WPM:"):
-                current_wpm = int(line.strip().split(":")[1])
-                print(f"Resuming with WPM: {current_wpm}")
-    except:
-        pass
-
-# ----- MAIN LOOP -----
 
 try:
     while i < total_words:
         word, page = words_info[i]
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                with open(log_file, "w") as f:
-                    f.write(str(i))
+                # Save WPM, index, and keep processed text
+                with open(CACHE_FILE, "r+", encoding="utf-8") as f:
+                    lines = f.readlines()
+                    lines[0] = f"{current_wpm}\n"
+                    lines[1] = f"{i}\n"
+                    f.seek(0)
+                    f.writelines(lines)
                 pygame.quit()
                 sys.exit()
+
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
                     paused = not paused
                     if paused:
-                        with open(log_file, "w") as f:
-                            f.write(str(i))
+                        with open(CACHE_FILE, "r+", encoding="utf-8") as f:
+                            lines = f.readlines()
+                            lines[0] = f"{current_wpm}\n"
+                            lines[1] = f"{i}\n"
+                            f.seek(0)
+                            f.writelines(lines)
                         print(f"Paused at word {i}")
                 elif event.key == pygame.K_UP:
                     current_wpm += WPM_STEP
@@ -188,9 +179,12 @@ except KeyboardInterrupt:
     print("\nInterrupted by user!")
 
 finally:
-    # Always save log and config
-    with open(log_file, "w") as f:
-        f.write(str(i))
-    save_config()
+    # Save final WPM, index, and keep processed text
+    with open(CACHE_FILE, "r+", encoding="utf-8") as f:
+        lines = f.readlines()
+        lines[0] = f"{current_wpm}\n"
+        lines[1] = f"{i}\n"
+        f.seek(0)
+        f.writelines(lines)
     pygame.quit()
     sys.exit()
