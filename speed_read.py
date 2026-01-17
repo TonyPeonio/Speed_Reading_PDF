@@ -6,8 +6,12 @@ import PyPDF2
 import pytesseract
 from pdf2image import convert_from_path
 
+PDF_FILE = input("Which pdf would you like to read using RSVP?\n")
+
+if(PDF_FILE[-4:] != ".pdf"):
+    PDF_FILE = PDF_FILE + ".pdf"
+
 # ----- CONFIG -----
-PDF_FILE = "Example_Quantum_Bioinformatics.pdf"
 CACHE_FILE = os.path.splitext(PDF_FILE)[0] + "_cache.txt"
 START_WPM = 500
 WPM_STEP = 50
@@ -24,62 +28,6 @@ REFRESH_BACKWORDS = 100
 POPPLER_PATH = r"C:\poppler-25.12.0\Library\bin"
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 # ------------------
-
-# ----- LOAD CACHE FILE -----
-start_index = 0
-current_wpm = START_WPM
-pages_text = []
-
-if os.path.exists(CACHE_FILE):
-    print("Loading from cache file...")
-    with open(CACHE_FILE, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-        # First line = WPM
-        try:
-            current_wpm = int(lines[0].strip())
-        except:
-            current_wpm = START_WPM
-        # Second line = last word index
-        try:
-            start_index = max(int(lines[1].strip()) - REFRESH_BACKWORDS, 0)
-        except:
-            start_index = 0
-        # Remaining lines = processed text
-        pages_text = "".join(lines[2:]).split("\n\n---PAGE---\n\n")
-
-# ----- PROCESS PDF IF CACHE EMPTY -----
-if not pages_text or all(not p.strip() for p in pages_text):
-    print("Processing PDF...")
-    pages_text = []
-    with open(PDF_FILE, "rb") as f:
-        reader = PyPDF2.PdfReader(f)
-        for page in reader.pages:
-            text = page.extract_text()
-            if text:
-                pages_text.append(text)
-
-    # If PDF has no text, use OCR
-    if len(pages_text) == 0:
-        print("No text found, using OCR...")
-        images = convert_from_path(PDF_FILE, dpi=300, poppler_path=POPPLER_PATH)
-        for img in images:
-            gray = img.convert('L')
-            pages_text.append(pytesseract.image_to_string(gray))
-
-    # Save processed text + WPM/index to cache
-    with open(CACHE_FILE, "w", encoding="utf-8") as f:
-        f.write(f"{current_wpm}\n{start_index}\n")
-        for page in pages_text:
-            f.write(page.strip() + "\n\n---PAGE---\n\n")
-
-# ----- EXTRACT WORDS -----
-words_info = []
-for page_idx, page in enumerate(pages_text):
-    for word in re.findall(r'\b\w+\b', page):
-        words_info.append((word, page_idx + 1))
-
-total_words = len(words_info)
-print(f"Total words extracted: {total_words}")
 
 # ----- INITIALIZE PYGAME -----
 pygame.init()
@@ -127,6 +75,91 @@ def draw_word(word, page, wpm, word_index):
 
 def wpm_to_duration(wpm):
     return max(60000 / wpm, 10)
+
+def clean_page_text(page_text):
+    """
+    Removes generic boilerplate lines like 'Creative Commons License' 
+    and lines containing typical author info.
+    """
+    lines = page_text.splitlines()
+    cleaned_lines = []
+    for line in lines:
+        stripped = line.strip()
+        # Skip empty lines
+        if not stripped:
+            continue
+        # Skip license lines
+        if re.search(r'creative\s+commons|license', stripped, re.IGNORECASE):
+            continue
+        # Skip author lines (simple heuristic: line contains 'author' or multiple capitalized words)
+        if re.search(r'author', stripped, re.IGNORECASE):
+            continue
+        # Skip lines that are probably names (e.g., 2-4 capitalized words in a row)
+        if re.match(r'^([A-Z][a-z]+(\s|$)){2,4}$', stripped):
+            continue
+        cleaned_lines.append(stripped)
+    return " ".join(cleaned_lines)  # combine into single string per page
+
+# ----- LOAD CACHE FILE -----
+start_index = 0
+current_wpm = START_WPM
+pages_text = []
+
+if os.path.exists(CACHE_FILE):
+    print("Loading from cache file...")
+    with open(CACHE_FILE, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+        # First line = WPM
+        try:
+            current_wpm = int(lines[0].strip())
+        except:
+            current_wpm = START_WPM
+        # Second line = last word index
+        try:
+            start_index = max(int(lines[1].strip()) - REFRESH_BACKWORDS, 0)
+        except:
+            start_index = 0
+        # Remaining lines = processed text
+        pages_text = "".join(lines[2:]).split("\n\n---PAGE---\n\n")
+
+# ----- PROCESS PDF IF CACHE EMPTY -----
+if not pages_text or all(not p.strip() for p in pages_text):
+    print("Processing PDF...")
+    pages_text = []
+    with open(PDF_FILE, "rb") as f:
+        reader = PyPDF2.PdfReader(f)
+        for page in reader.pages:
+            text = page.extract_text()
+            if text:
+                pages_text.append(text)
+
+    # If PDF has no text, use OCR
+    if len(pages_text) == 0:
+        print("No text found, using OCR...")
+        images = convert_from_path(PDF_FILE, dpi=300, poppler_path=POPPLER_PATH)
+        for img in images:
+            gray = img.convert('L')
+            pages_text.append(pytesseract.image_to_string(gray))
+    
+    for page in pages_text:
+        page = clean_page_text(page)
+
+    # Save processed text + WPM/index to cache
+    with open(CACHE_FILE, "w", encoding="utf-8") as f:
+        f.write(f"{current_wpm}\n{start_index}\n")
+        for page in pages_text:
+            f.write(page.strip() + "\n\n---PAGE---\n\n")
+
+
+
+# ----- EXTRACT WORDS -----
+words_info = []
+for page_idx, page in enumerate(pages_text):
+    for word in re.findall(r'\b\w+\b', page):
+        words_info.append((word, page_idx + 1))
+
+total_words = len(words_info)
+print(f"Total words extracted: {total_words}")
 
 # ----- MAIN LOOP -----
 paused = False
