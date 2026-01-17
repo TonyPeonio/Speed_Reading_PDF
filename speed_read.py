@@ -8,6 +8,7 @@ from pdf2image import convert_from_path
 
 # ----- CONFIG -----
 PDF_FILE = "Example_Quantum_Bioinformatics.pdf"
+TXT_FILE = os.path.splitext(PDF_FILE)[0] + "_processed.txt"
 CONFIG_FILE = "speed_read_config.txt"
 START_WPM = 500
 WPM_STEP = 50
@@ -25,25 +26,36 @@ poppler_path = r"C:\poppler-25.12.0\Library\bin"
 # ------------------
 
 # ----- LOAD PDF TEXT -----
-pages_text = []
-with open(PDF_FILE, "rb") as f:
-    reader = PyPDF2.PdfReader(f)
-    for page in reader.pages:
-        page_text = page.extract_text()
-        if page_text:
+# If we already processed this PDF, just load the text
+if os.path.exists(TXT_FILE):
+    print("Processed plain text file already exists. Accelerating process.")
+    with open(TXT_FILE, "r", encoding="utf-8") as f:
+        full_text = f.read()
+    pages_text = full_text.split("\n\n---PAGE---\n\n")  # if you want to keep pages separate
+else:
+    # ----- LOAD PDF TEXT -----
+    pages_text = []
+    with open(PDF_FILE, "rb") as f:
+        
+        reader = PyPDF2.PdfReader(f)
+        for page in reader.pages:
+            page_text = page.extract_text()
+            if page_text:
+                pages_text.append(page_text)
+
+    # If no text found, use OCR
+    if len(pages_text) == 0:
+        print("No text found in PDF, using OCR...")
+        images = convert_from_path(PDF_FILE, dpi=300, poppler_path=poppler_path)
+        for img in images:
+            gray = img.convert('L')
+            page_text = pytesseract.image_to_string(gray)
             pages_text.append(page_text)
 
-# If no text found, use OCR
-if len(pages_text) == 0:
-    print("No text found in PDF, using OCR...")
-    images = convert_from_path(PDF_FILE, dpi=300, poppler_path=poppler_path)
-    for img in images:
-        # Convert image to grayscale for better OCR accuracy
-        gray = img.convert('L')
-        # Optional: thresholding can help for poor scans
-        # gray = gray.point(lambda x: 0 if x < 128 else 255, '1')
-        text = pytesseract.image_to_string(gray)
-        pages_text.append(text)
+    # Save processed text for future use
+    with open(TXT_FILE, "w", encoding="utf-8") as f:
+        for page in pages_text:
+            f.write(page.strip() + "\n\n---PAGE---\n\n")
 
 # ----- PROCESS WORDS AND TRACK PAGES -----
 words_info = []  # list of (word, page_num)
@@ -52,6 +64,7 @@ for page_idx, page in enumerate(pages_text):
         words_info.append((word, page_idx + 1))
 
 total_words = len(words_info)
+print(f"Total words extracted: {total_words}")
 
 # ----- LOAD LOG -----
 log_file = f"{os.path.splitext(PDF_FILE)[0]}_log.txt"
