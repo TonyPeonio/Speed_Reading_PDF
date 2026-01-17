@@ -3,9 +3,11 @@ import sys
 import re
 import PyPDF2
 import os
+import pytesseract
+from pdf2image import convert_from_path
 
 # ----- CONFIG -----
-PDF_FILE = "Quantum_Neuroscience_READ.pdf"
+PDF_FILE = "Example_Quantum_Bioinformatics.pdf"
 CONFIG_FILE = "speed_read_config.txt"
 START_WPM = 500
 WPM_STEP = 50
@@ -18,6 +20,8 @@ BACKGROUND_COLOR = (0, 0, 0)
 LETTER_COLOR = (255, 255, 255)
 CENTER_COLOR = (255, 0, 0)
 REFRESH_BACKWORDS = 100
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+poppler_path = r"C:\poppler-25.12.0\Library\bin"
 # ------------------
 
 # ----- LOAD PDF TEXT -----
@@ -29,9 +33,17 @@ with open(PDF_FILE, "rb") as f:
         if page_text:
             pages_text.append(page_text)
 
+# If no text found, use OCR
 if len(pages_text) == 0:
-    print("No text found in PDF!")
-    sys.exit()
+    print("No text found in PDF, using OCR...")
+    images = convert_from_path(PDF_FILE, dpi=300, poppler_path=poppler_path)
+    for img in images:
+        # Convert image to grayscale for better OCR accuracy
+        gray = img.convert('L')
+        # Optional: thresholding can help for poor scans
+        # gray = gray.point(lambda x: 0 if x < 128 else 255, '1')
+        text = pytesseract.image_to_string(gray)
+        pages_text.append(text)
 
 # ----- PROCESS WORDS AND TRACK PAGES -----
 words_info = []  # list of (word, page_num)
