@@ -76,6 +76,23 @@ def draw_word(word, page, wpm, word_index):
 def wpm_to_duration(wpm):
     return max(60000 / wpm, 10)
 
+def truncate_references(full_text):
+    """
+    Truncates everything after the references/bibliography section.
+    """
+    patterns = [    ]
+
+    lower_text = full_text.lower()
+    cut_idx = None
+
+    for pat in patterns:
+        match = re.search(pat, lower_text)
+        if match:
+            cut_idx = match.start()
+            break
+
+    return full_text[:cut_idx] if cut_idx is not None else full_text
+
 def clean_page_text(page_text):
     """
     Removes generic boilerplate lines like 'Creative Commons License' 
@@ -141,14 +158,24 @@ if not pages_text or all(not p.strip() for p in pages_text):
             gray = img.convert('L')
             pages_text.append(pytesseract.image_to_string(gray))
     
+    # Truncate references: stop at the first page containing a references/bibliography section
+    truncated_pages = []
     for page in pages_text:
-        page = clean_page_text(page)
+        page_truncated = truncate_references(page)
+        truncated_pages.append(page_truncated)
+        # If this page contained references, stop adding further pages
+        if page_truncated != page:
+            break
+
+    # Clean each page
+    pages_text = [clean_page_text(page) for page in truncated_pages]
 
     # Save processed text + WPM/index to cache
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         f.write(f"{current_wpm}\n{start_index}\n")
         for page in pages_text:
             f.write(page.strip() + "\n\n---PAGE---\n\n")
+
 
 
 
@@ -195,11 +222,9 @@ try:
                 elif event.key == pygame.K_UP:
                     current_wpm += WPM_STEP
                     current_duration = wpm_to_duration(current_wpm)
-                    print(f"Speed increased: {current_wpm} WPM")
                 elif event.key == pygame.K_DOWN:
                     current_wpm = max(MIN_WPM, current_wpm - WPM_STEP)
                     current_duration = wpm_to_duration(current_wpm)
-                    print(f"Speed decreased: {current_wpm} WPM")
 
         if not paused:
             draw_word(word, page, current_wpm, i)
